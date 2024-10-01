@@ -2,13 +2,50 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
+	"os"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
 var (
 	local_addr string
+	OS_Type    string = runtime.GOOS
+	Hostname   string
+	devices    []Device
+	log        = slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	stopFinding  bool      = false
+	maintainChan chan bool = make(chan bool)
 )
+
+// mutex
+type Device struct {
+	Name       string
+	IP         string
+	OS         string
+	last_octet int
+}
+
+func removeDuplicateStr(mut *sync.Mutex) {
+	mut.Lock()
+	allKeys := make(map[string]bool)
+	list := []Device{}
+	for _, item := range devices {
+		if _, value := allKeys[item.Name]; !value {
+			allKeys[item.Name] = true
+			list = append(list, item)
+		}
+	}
+	devices = list
+	log.Debug("Removed Duplicates")
+	fmt.Println(devices)
+	mut.Unlock()
+}
 
 func getLocalIP() (string, error) {
 	interfaces, err := net.Interfaces()
@@ -40,10 +77,35 @@ func getLocalIP() (string, error) {
 	return "", fmt.Errorf("no local IP address found")
 }
 
+func getLastOctet() int {
+	str := strings.Split(local_addr, ".")
+	last_num, err := strconv.Atoi(str[len(str)-1])
+	if err != nil {
+		log.Error("ERROR IN CONVERTING. getLastOctet()")
+	}
+	return last_num
+}
+
+func maintainConnection(remote *net.UDPAddr) {
+	<-maintainChan
+
+}
+
+func GetDevices() []Device {
+	return devices
+}
+
 func SendBroadcastUDP(conn *net.UDPConn, remote *net.UDPAddr) {
 	for {
+		if stopFinding {
+			log.Debug("STOP FINDING. MAINTAINING CONNECTION")
+			break
+		}
 		fmt.Println("SENDINING : ")
-		_, err := conn.WriteToUDP([]byte("data"), remote)
+		//name := syscall.GetComputerName()
+		last_octet := getLastOctet()
+
+		_, err := conn.WriteToUDP([]byte(Hostname+"|"+OS_Type+"|"+strconv.Itoa(last_octet)), remote)
 		if err != nil {
 			fmt.Println("Error sending broadcast:", err)
 		}
@@ -51,12 +113,20 @@ func SendBroadcastUDP(conn *net.UDPConn, remote *net.UDPAddr) {
 	}
 }
 
-func ReceiveBroadcastUDP(conn *net.UDPConn) {
+func ReceiveBroadcastUDP(conn *net.UDPConn, remote *net.UDPAddr, mut *sync.Mutex) {
 
 	for {
-
+		if stopFinding {
+			log.Debug("STOP FINDING. MAINTAINING CONNECTION")
+			break
+		}
 		buf := make([]byte, 1024)
 		n, addr, err := conn.ReadFromUDP(buf)
+
+		body_resp := string(buf[:n])
+
+		body_resp_arr := strings.Split(body_resp, "|")
+
 		if err != nil {
 			fmt.Println("Error receiving broadcast:", err)
 			continue
@@ -65,13 +135,26 @@ func ReceiveBroadcastUDP(conn *net.UDPConn) {
 			fmt.Println("Message from local")
 			continue
 		} else {
-			fmt.Printf("%s RECIEVED: %s | ", addr, buf[:n])
-			fmt.Println(conn.LocalAddr().Network())
+			//fmt.Printf("%s RECIEVED: %s | ", addr, buf[:n])
+			last_octet, err := strconv.Atoi(body_resp_arr[2])
+			if err != nil {
+				log.Error("ERROR IN CONVERTING. RecieveBroadcastUDP()")
+			}
+
+			devices = append(devices, Device{body_resp_arr[0], addr.IP.String(), body_resp_arr[1], last_octet})
+			//fmt.Println(devices)
+			go removeDuplicateStr(mut)
+
 		}
 	}
 }
 
 func main() {
+	Host_temp, err := os.Hostname()
+	if err != nil {
+		fmt.Println(err)
+	}
+	Hostname = Host_temp
 	local, err := net.ResolveUDPAddr("udp4", ":4826")
 	if err != nil {
 		panic(err)
@@ -93,6 +176,8 @@ func main() {
 		panic(err)
 	}
 
+	var mut sync.Mutex
 	go SendBroadcastUDP(conn, remote)
-	ReceiveBroadcastUDP(conn)
+	ReceiveBroadcastUDP(conn, remote, &mut)
+
 }
