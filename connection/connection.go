@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log/slog"
 	"net"
@@ -86,8 +87,77 @@ func getLastOctet() int {
 	return last_num
 }
 
-func maintainConnection(remote *net.UDPAddr) {
-	<-maintainChan
+func maintainConnection() {
+	//fmt.Println(<-maintainChan)
+
+	last_octet_local := getLastOctet()
+
+	str := strings.Split(devices[0].IP, ".")
+	last_octet_remote, err := strconv.Atoi(str[len(str)-1])
+	if err != nil {
+		log.Error("ERROR IN CONVERTING. maintanConnection()")
+	}
+
+	if last_octet_local > last_octet_remote {
+		conn, err := net.Dial("tcp4", devices[0].IP+":4827")
+		if err != nil {
+			log.Error("DIAL ERROR", slog.String("err_msg", err.Error()))
+		}
+		connbuf := bufio.NewReader(conn)
+
+		go func() {
+			fmt.Println("SENDING")
+			for {
+				_, err := conn.Write([]byte("PING\n"))
+				if err != nil {
+					fmt.Println("Error sending broadcast:", err)
+				}
+				time.Sleep(5 * time.Second)
+			}
+		}()
+		for {
+			str, err := connbuf.ReadString('\n')
+			if err != nil {
+				break
+			}
+
+			if len(str) > 0 {
+				fmt.Println(str)
+			}
+		}
+	} else {
+		lst, err := net.Listen("tcp4", ":4827")
+		if err != nil {
+			log.Error("ERROR IN net.Listem", slog.String("err_msg", err.Error()))
+		}
+		defer lst.Close()
+
+		for {
+			conn, err := lst.Accept()
+			if err != nil {
+				log.Error("ERROR IN ACCCEPTING CONNECTION", slog.String("err_msg", err.Error()))
+			}
+			remoteAddr := conn.RemoteAddr().String()
+			fmt.Println("Client connected from " + remoteAddr)
+
+			scanner := bufio.NewScanner(conn)
+
+			for {
+				ok := scanner.Scan()
+				if !ok {
+					break
+				}
+				fmt.Println(scanner.Text())
+				if scanner.Text() != "" {
+					conn.Write([]byte("PONG\n"))
+				}
+			}
+
+			fmt.Println("Client at " + remoteAddr + " disconnected.")
+
+		}
+
+	}
 
 }
 
@@ -178,6 +248,12 @@ func main() {
 
 	var mut sync.Mutex
 	go SendBroadcastUDP(conn, remote)
-	ReceiveBroadcastUDP(conn, remote, &mut)
+	go ReceiveBroadcastUDP(conn, remote, &mut)
 
+	time.Sleep(10 * time.Second)
+	stopFinding = true
+
+	//maintainChan <- true
+
+	maintainConnection()
 }

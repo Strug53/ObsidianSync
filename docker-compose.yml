@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  device1:
+    build: ./connection
+    image: connection:v0
+    container_name: device1
+    networks:
+      local_net:
+
+  device2:
+    build: ./connection
+    image: connection:v0
+    container_name: device2
+    networks:
+      local_net:
+
+networks:
+  local_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24

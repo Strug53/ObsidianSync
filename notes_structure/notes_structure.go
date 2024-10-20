@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"sync"
@@ -44,10 +47,10 @@ func (w *WorkDir) FillDir() {
 			})
 			//FILL THE FOLDERS STRUCT
 		} else {
-			w.Notes = append(w.Notes, File_Note{
-				Name: e.Name(),
-				Path: w.Path + "\\" + e.Name(),
-			})
+			File := &File_Note{Name: e.Name(), Path: w.Path + "\\" + e.Name()}
+			writeFileSize(File)
+			writeCheckSum(File)
+			w.Notes = append(w.Notes, *File)
 		}
 	}
 }
@@ -77,11 +80,10 @@ func (f *Folder_struct) FillDir() {
 			})
 			//FILL THE FOLDERS STRUCT
 		} else {
-			f.Notes = append(f.Notes, File_Note{
-				Name: e.Name(),
-				Path: f.Path + "\\" + e.Name(),
-			})
-
+			File := &File_Note{Name: e.Name(), Path: f.Path + "\\" + e.Name()}
+			writeFileSize(File)
+			writeCheckSum(File)
+			f.Notes = append(f.Notes, *File)
 		}
 	}
 
@@ -105,7 +107,6 @@ func Fill() {
 	if WorkDir_main.Folders != nil {
 		for i := 0; i < len(WorkDir_main.Folders); i++ {
 			e := &WorkDir_main.Folders[i]
-
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -150,12 +151,27 @@ func main() {
 	)
 	Fill()
 	fmt.Println(WorkDir_main.Folders)
+	//fmt.Println(WorkDir_main.Folders[0].Notes[5].checksum)
+}
+func writeCheckSum(f *File_Note) {
+	file, err := os.Open(f.Path)
+	if err != nil {
+		log.Error(err.Error())
+	}
+	defer file.Close()
 
-	/*
-		for _, e := range WorkDir_main.Folders {
-			for _, e1 := range e.Notes {
-				fmt.Println(e1.Name)
-			}
-		}
-	*/
+	h := sha256.New()
+	if _, err := io.Copy(h, file); err != nil {
+		log.Error(err.Error())
+	}
+	checksum_hex := hex.EncodeToString(h.Sum(nil))
+	f.checksum = string(checksum_hex)
+
+}
+func writeFileSize(f *File_Note) {
+	file_stat, err := os.Stat(f.Path)
+	if err != nil {
+		log.Error(err.Error())
+	}
+	f.size = int(file_stat.Size())
 }
